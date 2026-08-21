@@ -1,41 +1,39 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from google.cloud import storage
+import boto3
 import joblib
 import os
 
 app = FastAPI()
 
-GCS_BUCKET = os.environ["GCS_BUCKET"]
-GCS_MODEL_KEY = "models/latest/model.pkl"
+# Đọc tên bucket từ biến môi trường
+BUCKET_NAME = (
+    os.environ.get("AWS_BUCKET")
+    or os.environ.get("CLOUD_BUCKET")
+    or os.environ.get("GCS_BUCKET", "")
+)
+MODEL_KEY = "models/latest/model.pkl"
 MODEL_PATH = os.path.expanduser("~/models/model.pkl")
 
 
 def download_model():
     """
-    Tai file model.pkl tu GCS ve may khi server khoi dong.
+    Tai file model.pkl tu AWS S3 ve may khi server khoi dong.
 
-    Ham nay duoc goi mot lan khi module duoc import. Su dung
-    GOOGLE_APPLICATION_CREDENTIALS de xac thuc (duoc dat trong systemd service).
+    Ham nay duoc goi mot lan khi module duoc import.
     """
-    # TODO 1: Tao storage.Client()
-    # client = storage.Client()
-
-    # TODO 2: Lay bucket va blob tuong ung
-    # bucket = client.bucket(GCS_BUCKET)
-    # blob   = bucket.blob(GCS_MODEL_KEY)
-
-    # TODO 3: Tai file model xuong may
-    # blob.download_to_filename(MODEL_PATH)
-
-    # TODO 4: In thong bao thanh cong
-    # print("Model da duoc tai xuong tu GCS.")
-
-    pass  # xoa dong nay sau khi hoan thanh tat ca TODO ben tren
+    os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
+    s3_client = boto3.client("s3")
+    print(f"Dang tai model tu s3://{BUCKET_NAME}/{MODEL_KEY} ve {MODEL_PATH}...")
+    s3_client.download_file(BUCKET_NAME, MODEL_KEY, MODEL_PATH)
+    print("Model da duoc tai xuong tu S3 thanh cong.")
 
 
-download_model()
-model = joblib.load(MODEL_PATH)
+if os.environ.get("SKIP_MODEL_DOWNLOAD") != "1":
+    download_model()
+    model = joblib.load(MODEL_PATH)
+else:
+    model = None
 
 
 class PredictRequest(BaseModel):
@@ -50,8 +48,7 @@ def health():
 
     Tra ve: {"status": "ok"}
     """
-    # TODO 5: Tra ve dict {"status": "ok"}
-    pass  # xoa dong nay sau khi hoan thanh
+    return {"status": "ok"}
 
 
 @app.post("/predict")
@@ -67,19 +64,23 @@ def predict(req: PredictRequest):
         chlorides, free_sulfur_dioxide, total_sulfur_dioxide, density,
         pH, sulphates, alcohol, wine_type
     """
-    # TODO 6: Kiem tra so luong dac trung.
-    # Neu len(req.features) != 12, raise HTTPException(status_code=400, ...)
+    if len(req.features) != 12:
+        raise HTTPException(
+            status_code=400,
+            detail="Expected 12 features (wine quality)"
+        )
 
-    # TODO 7: Goi model.predict([req.features]) de lay ket qua du doan.
-    # pred = model.predict(...)
+    if model is None:
+        raise HTTPException(status_code=500, detail="Model is not loaded")
 
-    # TODO 8: Tra ve dict chua "prediction" (int) va "label" (string).
-    # Nhan tuong ung: 0 -> "thap", 1 -> "trung_binh", 2 -> "cao"
-    # return {"prediction": ..., "label": ...}
+    pred = int(model.predict([req.features])[0])
+    label_map = {0: "thap", 1: "trung_binh", 2: "cao"}
+    label = label_map.get(pred, "khong_xac_dinh")
 
-    pass  # xoa dong nay sau khi hoan thanh tat ca TODO ben tren
+    return {"prediction": pred, "label": label}
 
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
