@@ -161,8 +161,20 @@ jobs:
           host: ${{ secrets.VM_HOST }}
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_SSH_KEY }}
+          command_timeout: 5m
           script: |
             sudo systemctl restart mlops-serve
-            sleep 5
-            curl -sf http://localhost:8000/health && echo "Health check passed." || exit 1
+            echo "Waiting for server to start (downloading model from S3)..."
+            for i in $(seq 1 18); do
+              sleep 10
+              if curl -sf http://localhost:8000/health; then
+                echo ""
+                echo "Health check passed on attempt $i!"
+                exit 0
+              fi
+              echo "Attempt $i: server not ready yet, retrying..."
+            done
+            echo "Health check failed after all attempts."
+            sudo journalctl -u mlops-serve -n 20 --no-pager
+            exit 1
 
