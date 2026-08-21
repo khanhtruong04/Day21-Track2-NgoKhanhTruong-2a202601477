@@ -61,15 +61,33 @@ jobs:
           CLOUD_CREDENTIALS: ${{ secrets.CLOUD_CREDENTIALS }}
         run: |
           python - <<'EOF'
-          import json, os
-          creds = json.loads(os.environ.get("CLOUD_CREDENTIALS", "{}"))
-          key_id = creds.get("aws_access_key_id") or creds.get("AWS_ACCESS_KEY_ID", "")
-          secret_key = creds.get("aws_secret_access_key") or creds.get("AWS_SECRET_ACCESS_KEY", "")
+          import json, os, re
+          raw = os.environ.get("CLOUD_CREDENTIALS", "{}").strip()
+          try:
+              creds = json.loads(raw)
+          except Exception:
+              # Fallback if single quotes or format issue
+              key_match = re.search(r'["\']?(?:aws_access_key_id|AWS_ACCESS_KEY_ID)["\']?\s*[:=]\s*["\']?([^"\'\s,]+)["\']?', raw)
+              sec_match = re.search(r'["\']?(?:aws_secret_access_key|AWS_SECRET_ACCESS_KEY)["\']?\s*[:=]\s*["\']?([^"\'\s,]+)["\']?', raw)
+              creds = {
+                  "aws_access_key_id": key_match.group(1) if key_match else "",
+                  "aws_secret_access_key": sec_match.group(1) if sec_match else ""
+              }
+          key_id = (creds.get("aws_access_key_id") or creds.get("AWS_ACCESS_KEY_ID", "")).strip()
+          secret_key = (creds.get("aws_secret_access_key") or creds.get("AWS_SECRET_ACCESS_KEY", "")).strip()
+          
           with open(os.environ["GITHUB_ENV"], "a") as f:
               f.write(f"AWS_ACCESS_KEY_ID={key_id}\n")
               f.write(f"AWS_SECRET_ACCESS_KEY={secret_key}\n")
-              f.write("AWS_DEFAULT_REGION=us-east-1\n")
+              f.write("AWS_DEFAULT_REGION=ap-southeast-1\n")
+              f.write("AWS_REGION=ap-southeast-1\n")
           EOF
+
+      - name: Configure DVC remote credentials
+        run: |
+          dvc remote modify myremote region ap-southeast-1
+          dvc remote modify myremote access_key_id "$AWS_ACCESS_KEY_ID"
+          dvc remote modify myremote secret_access_key "$AWS_SECRET_ACCESS_KEY"
 
       - name: Pull data with DVC
         run: dvc pull data/train_phase1.csv.dvc data/eval.csv.dvc
@@ -90,10 +108,11 @@ jobs:
           python - <<'EOF'
           import os, boto3
           bucket = os.environ["CLOUD_BUCKET"]
-          s3 = boto3.client("s3")
+          s3 = boto3.client("s3", region_name="ap-southeast-1")
           s3.upload_file("models/model.pkl", bucket, "models/latest/model.pkl")
           print(f"Uploaded models/model.pkl to s3://{bucket}/models/latest/model.pkl")
           EOF
+
 
       - name: Save metrics as artifact
         uses: actions/upload-artifact@v4
